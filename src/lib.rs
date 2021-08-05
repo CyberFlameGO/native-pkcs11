@@ -1,10 +1,69 @@
+extern crate lazy_static;
+
+mod module;
 mod pkcs11;
 
+use lazy_static::lazy_static;
+use module::{Error, Module, Result};
 use pkcs11::*;
+use std::ops;
+use std::sync;
 
 fn err_not_implemented(name: &str) -> CK_RV {
     eprintln!("{}() not implemented", name);
     return CKR_FUNCTION_FAILED as CK_RV;
+}
+
+lazy_static! {
+    // The module as a global singleton held by a mutex. This its set through calls to C_Initialize
+    // and cleaned up by C_Finalize.
+    //
+    // Use result_to_rv_with_mod to access this.
+    static ref MODULE: sync::Mutex<Option<Module>> = sync::Mutex::new(None);
+}
+
+// Helper function to convert a function that returns a result to a CK_RV, logging any errors. The
+// fn_name should be the corresponding PKCS #11 function this is called by, for example
+// "C_GetInfo".
+fn result_to_rv<F>(fn_name: &str, f: F) -> CK_RV
+where
+    F: ops::FnOnce() -> Result<()>,
+{
+    return match f() {
+        Ok(()) => CKR_OK as CK_RV,
+        Err(err) => {
+            eprintln!("{}() {}", fn_name, err);
+            err.rv()
+        }
+    };
+}
+
+// Helper function that allows mutable access to the global Module, while also converting the
+// Result to a CK_RV suitable to be returned from a PKCS #11 function. Similar to result_to_rv(),
+// fn_name should be the corresponding PKCS #11 function.
+//
+// ```
+// return result_to_rv_with_mod("C_GetSlotList", |mod| {
+//     // Use "mod" to retrieve the slot list.
+//     // ...
+//
+//     return Ok(());
+// });
+// ```
+fn result_to_rv_with_mod<F>(fn_name: &str, f: F) -> CK_RV
+where
+    F: ops::FnOnce(&mut Module) -> Result<()>,
+{
+    return result_to_rv(fn_name, || {
+        let mut o = MODULE
+            .lock()
+            .map_err(|err| errorf!(CKR_GENERAL_ERROR, "failed to acquire lock: {}", err))?;
+        let mut m = o.as_mut().ok_or(errorf!(
+            CKR_CRYPTOKI_NOT_INITIALIZED,
+            "module not initialized"
+        ))?;
+        return f(&mut m);
+    });
 }
 
 static mut FUNC_LIST: CK_FUNCTION_LIST = CK_FUNCTION_LIST {
@@ -80,8 +139,27 @@ static mut FUNC_LIST: CK_FUNCTION_LIST = CK_FUNCTION_LIST {
 };
 
 #[no_mangle]
-pub extern "C" fn C_Initialize(_init_args: CK_VOID_PTR) -> CK_RV {
-    return err_not_implemented("C_Initialize");
+pub extern "C" fn C_Initialize(init_args: CK_VOID_PTR) -> CK_RV {
+    return result_to_rv("C_Initialize", || {
+        if !init_args.is_null() {
+            let args = unsafe { *(init_args as CK_C_INITIALIZE_ARGS_PTR) };
+            if args.flags & (CKF_LIBRARY_CANT_CREATE_OS_THREADS as u64) != 0 {
+                return Err(errorf!(
+                    CKR_NEED_TO_CREATE_THREADS,
+                    "library requires use of OS threads"
+                ));
+            }
+        }
+
+        let m = Module::new()
+            .map_err(|err| errorf!(CKR_FUNCTION_FAILED, "failed to initialize module: {}", err))?;
+
+        let mut o = MODULE
+            .lock()
+            .map_err(|err| errorf!(CKR_GENERAL_ERROR, "failed to acquire lock: {}", err))?;
+        *o = Some(m);
+        return Ok(());
+    });
 }
 
 #[no_mangle]
@@ -158,7 +236,13 @@ pub extern "C" fn C_CloseAllSessions(_slot_id: CK_SLOT_ID) -> CK_RV {
 
 #[no_mangle]
 pub extern "C" fn C_Finalize(_reserved: CK_VOID_PTR) -> CK_RV {
-    return err_not_implemented("C_Finalize");
+    return result_to_rv("C_Finalize", || {
+        let mut o = MODULE
+            .lock()
+            .map_err(|err| errorf!(CKR_GENERAL_ERROR, "failed to acquire lock: {}", err))?;
+        *o = None;
+        return Ok(());
+    });
 }
 
 #[no_mangle]
