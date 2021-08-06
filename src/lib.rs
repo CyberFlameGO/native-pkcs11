@@ -6,8 +6,7 @@ mod pkcs11;
 use lazy_static::lazy_static;
 use module::{Error, Module, Result};
 use pkcs11::*;
-use std::ops;
-use std::sync;
+use std::{ops, ptr, slice, sync};
 
 fn err_not_implemented(name: &str) -> CK_RV {
     eprintln!("{}() not implemented", name);
@@ -163,15 +162,80 @@ pub extern "C" fn C_Initialize(init_args: CK_VOID_PTR) -> CK_RV {
 }
 
 #[no_mangle]
+pub extern "C" fn C_Finalize(_reserved: CK_VOID_PTR) -> CK_RV {
+    return result_to_rv("C_Finalize", || {
+        let mut o = MODULE
+            .lock()
+            .map_err(|err| errorf!(CKR_GENERAL_ERROR, "failed to acquire lock: {}", err))?;
+        *o = None;
+        return Ok(());
+    });
+}
+
+#[no_mangle]
 pub extern "C" fn C_GetInfo(_info_ptr: CK_INFO_PTR) -> CK_RV {
     return err_not_implemented("C_GetInfo");
 }
 
+const DEFAULT_SLOT_ID: CK_SLOT_ID = 0;
+
 #[no_mangle]
-pub extern "C" fn C_GetSlotInfo(_slot_id: CK_SLOT_ID, _slot_info_ptr: CK_SLOT_INFO_PTR) -> CK_RV {
-    return err_not_implemented("C_GetSlotInfo");
+pub extern "C" fn C_GetSlotList(
+    _token_present: CK_BBOOL,
+    slot_list_ptr: CK_SLOT_ID_PTR,
+    count_ptr: CK_ULONG_PTR,
+) -> CK_RV {
+    return result_to_rv("C_GetSlotList", || {
+        if count_ptr.is_null() {
+            return Err(errorf!(CKR_ARGUMENTS_BAD, "pulCount is null"));
+        }
+        if !slot_list_ptr.is_null() {
+            let count = unsafe { *count_ptr as usize };
+            if count < 1 {
+                return Err(errorf!(CKR_BUFFER_TOO_SMALL, "pulCount is {}", count));
+            }
+            let slot_list: &mut [u64] =
+                unsafe { slice::from_raw_parts_mut(slot_list_ptr, *count_ptr as usize) };
+            slot_list[0] = DEFAULT_SLOT_ID;
+        }
+        unsafe {
+            *count_ptr = 1;
+        }
+        Ok(())
+    });
 }
 
+const SLOT_DESCRIPTION: &[u8; 64] =
+    b"                                                                ";
+const MANUFACTURER_ID: &[u8; 32] = b"Google, LLC                     ";
+
+#[no_mangle]
+pub extern "C" fn C_GetSlotInfo(slot_id: CK_SLOT_ID, slot_info_ptr: CK_SLOT_INFO_PTR) -> CK_RV {
+    return result_to_rv("C_GetSlotInfo", || {
+        if slot_id != DEFAULT_SLOT_ID {
+            return Err(errorf!(
+                CKR_SLOT_ID_INVALID,
+                "{} is not a valid slot identifier",
+                slot_id
+            ));
+        }
+        if slot_info_ptr.is_null() {
+            return Err(errorf!(CKR_ARGUMENTS_BAD, "pInfo is null"));
+        }
+
+        let slot_info = CK_SLOT_INFO {
+            slotDescription: *SLOT_DESCRIPTION,
+            manufacturerID: *MANUFACTURER_ID,
+            flags: CKF_TOKEN_PRESENT as u64,
+            hardwareVersion: CK_VERSION { major: 0, minor: 0 },
+            firmwareVersion: CK_VERSION { major: 0, minor: 0 },
+        };
+        unsafe {
+            *slot_info_ptr = slot_info;
+        }
+        Ok(())
+    });
+}
 #[no_mangle]
 pub extern "C" fn C_GetTokenInfo(_slot_id: CK_SLOT_ID, _info_ptr: CK_TOKEN_INFO_PTR) -> CK_RV {
     return err_not_implemented("C_GetTokenInfo");
@@ -204,15 +268,6 @@ extern "C" fn C_GetMechanismInfo(
 }
 
 #[no_mangle]
-pub extern "C" fn C_GetSlotList(
-    _token_present: CK_BBOOL,
-    _slot_list_ptr: CK_SLOT_ID_PTR,
-    _count_ptr: CK_ULONG_PTR,
-) -> CK_RV {
-    return err_not_implemented("C_GetSlotList");
-}
-
-#[no_mangle]
 
 pub extern "C" fn C_OpenSession(
     _slot_id: CK_SLOT_ID,
@@ -232,17 +287,6 @@ pub extern "C" fn C_CloseSession(_h: CK_SESSION_HANDLE) -> CK_RV {
 #[no_mangle]
 pub extern "C" fn C_CloseAllSessions(_slot_id: CK_SLOT_ID) -> CK_RV {
     return err_not_implemented("C_CloseAllSession");
-}
-
-#[no_mangle]
-pub extern "C" fn C_Finalize(_reserved: CK_VOID_PTR) -> CK_RV {
-    return result_to_rv("C_Finalize", || {
-        let mut o = MODULE
-            .lock()
-            .map_err(|err| errorf!(CKR_GENERAL_ERROR, "failed to acquire lock: {}", err))?;
-        *o = None;
-        return Ok(());
-    });
 }
 
 #[no_mangle]
@@ -777,4 +821,59 @@ pub extern "C" fn C_WaitForSlotEvent(
     _reserved_ptr: CK_VOID_PTR,
 ) -> CK_RV {
     return err_not_implemented("C_WaitForSlotEvent");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn get_slot_list() {
+        let mut count = 0;
+        assert_eq!(
+            C_GetSlotList(0, std::ptr::null_mut(), &mut count),
+            CKR_OK as CK_RV
+        );
+        assert_eq!(count, 1);
+        let mut slot_list = vec![99; count as usize];
+        assert_eq!(
+            C_GetSlotList(0, slot_list.as_mut_ptr(), &mut count),
+            CKR_OK as CK_RV
+        );
+        assert_eq!(slot_list[0], 0);
+    }
+
+    #[test]
+    fn get_slot_list_null_count() {
+        assert_eq!(
+            C_GetSlotList(0, ptr::null_mut(), ptr::null_mut()),
+            CKR_ARGUMENTS_BAD as CK_RV
+        );
+    }
+
+    #[test]
+    fn get_slot_list_empty() {
+        let mut count = 0;
+        let mut slot_list = vec![0; 0];
+        assert_eq!(
+            C_GetSlotList(0, slot_list.as_mut_ptr(), &mut count),
+            CKR_BUFFER_TOO_SMALL as CK_RV
+        );
+    }
+
+    #[test]
+    fn get_slot_info_invalid_slot() {
+        assert_eq!(
+            C_GetSlotInfo(1, ptr::null_mut()),
+            CKR_SLOT_ID_INVALID as CK_RV
+        );
+    }
+
+    #[test]
+    fn get_slot_info_null_info() {
+        assert_eq!(
+            C_GetSlotInfo(DEFAULT_SLOT_ID, ptr::null_mut()),
+            CKR_ARGUMENTS_BAD as CK_RV
+        );
+    }
 }
