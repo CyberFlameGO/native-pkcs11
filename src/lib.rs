@@ -6,11 +6,11 @@ mod pkcs11;
 use lazy_static::lazy_static;
 use module::{Error, Module, Result};
 use pkcs11::*;
-use std::{ops, ptr, slice, sync};
+use std::{ops, slice, sync};
 
 fn err_not_implemented(name: &str) -> CK_RV {
     eprintln!("{}() not implemented", name);
-    return CKR_FUNCTION_FAILED as CK_RV;
+    return CKR_FUNCTION_FAILED;
 }
 
 lazy_static! {
@@ -29,7 +29,7 @@ where
     F: ops::FnOnce() -> Result<()>,
 {
     return match f() {
-        Ok(()) => CKR_OK as CK_RV,
+        Ok(()) => CKR_OK,
         Err(err) => {
             eprintln!("{}() {}", fn_name, err);
             err.rv()
@@ -142,7 +142,7 @@ pub extern "C" fn C_Initialize(init_args: CK_VOID_PTR) -> CK_RV {
     return result_to_rv("C_Initialize", || {
         if !init_args.is_null() {
             let args = unsafe { *(init_args as CK_C_INITIALIZE_ARGS_PTR) };
-            if args.flags & (CKF_LIBRARY_CANT_CREATE_OS_THREADS as u64) != 0 {
+            if args.flags & (CKF_LIBRARY_CANT_CREATE_OS_THREADS) != 0 {
                 return Err(errorf!(
                     CKR_NEED_TO_CREATE_THREADS,
                     "library requires use of OS threads"
@@ -190,7 +190,7 @@ pub extern "C" fn C_GetSlotList(
             return Err(errorf!(CKR_ARGUMENTS_BAD, "pulCount is null"));
         }
         if !slot_list_ptr.is_null() {
-            let count = unsafe { *count_ptr as usize };
+            let count = unsafe { *count_ptr };
             if count < 1 {
                 return Err(errorf!(CKR_BUFFER_TOO_SMALL, "pulCount is {}", count));
             }
@@ -226,7 +226,7 @@ pub extern "C" fn C_GetSlotInfo(slot_id: CK_SLOT_ID, slot_info_ptr: CK_SLOT_INFO
         let slot_info = CK_SLOT_INFO {
             slotDescription: *SLOT_DESCRIPTION,
             manufacturerID: *MANUFACTURER_ID,
-            flags: CKF_TOKEN_PRESENT as u64,
+            flags: CKF_TOKEN_PRESENT,
             hardwareVersion: CK_VERSION { major: 0, minor: 0 },
             firmwareVersion: CK_VERSION { major: 0, minor: 0 },
         };
@@ -244,9 +244,9 @@ pub extern "C" fn C_GetTokenInfo(_slot_id: CK_SLOT_ID, _info_ptr: CK_TOKEN_INFO_
 #[no_mangle]
 pub extern "C" fn C_GetFunctionList(function_list: CK_FUNCTION_LIST_PTR_PTR) -> CK_RV {
     unsafe {
-        *function_list = &mut FUNC_LIST as CK_FUNCTION_LIST_PTR;
+        *function_list = &mut FUNC_LIST;
     }
-    return CKR_OK as CK_RV;
+    return CKR_OK;
 }
 
 #[no_mangle]
@@ -826,19 +826,20 @@ pub extern "C" fn C_WaitForSlotEvent(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ptr;
 
     #[test]
     fn get_slot_list() {
         let mut count = 0;
         assert_eq!(
             C_GetSlotList(0, std::ptr::null_mut(), &mut count),
-            CKR_OK as CK_RV
+            CKR_OK
         );
         assert_eq!(count, 1);
         let mut slot_list = vec![99; count as usize];
         assert_eq!(
             C_GetSlotList(0, slot_list.as_mut_ptr(), &mut count),
-            CKR_OK as CK_RV
+            CKR_OK
         );
         assert_eq!(slot_list[0], 0);
     }
@@ -847,7 +848,7 @@ mod tests {
     fn get_slot_list_null_count() {
         assert_eq!(
             C_GetSlotList(0, ptr::null_mut(), ptr::null_mut()),
-            CKR_ARGUMENTS_BAD as CK_RV
+            CKR_ARGUMENTS_BAD
         );
     }
 
@@ -857,7 +858,7 @@ mod tests {
         let mut slot_list = vec![0; 0];
         assert_eq!(
             C_GetSlotList(0, slot_list.as_mut_ptr(), &mut count),
-            CKR_BUFFER_TOO_SMALL as CK_RV
+            CKR_BUFFER_TOO_SMALL
         );
     }
 
@@ -865,7 +866,7 @@ mod tests {
     fn get_slot_info_invalid_slot() {
         assert_eq!(
             C_GetSlotInfo(1, ptr::null_mut()),
-            CKR_SLOT_ID_INVALID as CK_RV
+            CKR_SLOT_ID_INVALID
         );
     }
 
@@ -873,7 +874,7 @@ mod tests {
     fn get_slot_info_null_info() {
         assert_eq!(
             C_GetSlotInfo(DEFAULT_SLOT_ID, ptr::null_mut()),
-            CKR_ARGUMENTS_BAD as CK_RV
+            CKR_ARGUMENTS_BAD
         );
     }
 }

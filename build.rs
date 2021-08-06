@@ -1,13 +1,40 @@
-extern crate bindgen;
 
+use bindgen::callbacks;
 use std::env;
 use std::path;
 
+#[derive(Debug)]
+pub struct CargoCallbacks;
+
+impl callbacks::ParseCallbacks for CargoCallbacks {
+    // https://github.com/rust-lang/rust-bindgen/issues/1594
+    fn int_macro(&self, name: &str, _value: i64) -> Option<callbacks::IntKind> {
+        if name.starts_with("CKA_")
+            || name.starts_with("CKF_")
+            || name.starts_with("CKM_")
+            || name.starts_with("CKR_")
+            || name.starts_with("CKO_")
+            || name.starts_with("CKS_")
+        {
+            Some(bindgen::callbacks::IntKind::U64)
+        } else if ["CK_TRUE", "CK_FALSE"].contains(&name) {
+            Some(bindgen::callbacks::IntKind::U8)
+        } else {
+            None
+        }
+    }
+
+    fn include_file(&self, filename: &str) {
+        println!("cargo:rerun-if-changed={}", filename);
+    }
+}
+
 fn main() {
-    // Largely copied from https://rust-lang.github.io/rust-bindgen/tutorial-3.html
+    println!("cargo:rerun-if-changed=wrapper.h");
+
     let bindings = bindgen::Builder::default()
         .header("third_party/pkcs11unix.h")
-        .parse_callbacks(Box::new(bindgen::CargoCallbacks))
+        .parse_callbacks(Box::new(CargoCallbacks))
         .generate()
         .expect("failed to generate bindings");
 
