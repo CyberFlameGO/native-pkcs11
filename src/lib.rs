@@ -836,77 +836,7 @@ mod tests {
 
     #[test]
     fn get_function_list() {
-        let mut function_list = CK_FUNCTION_LIST {
-            version: CK_VERSION { major: 0, minor: 0 },
-            C_Initialize: None,
-            C_Finalize: None,
-            C_GetInfo: None,
-            C_GetFunctionList: None,
-            C_GetSlotList: None,
-            C_GetSlotInfo: None,
-            C_GetTokenInfo: None,
-            C_GetMechanismList: None,
-            C_GetMechanismInfo: None,
-            C_InitToken: None,
-            C_InitPIN: None,
-            C_SetPIN: None,
-            C_OpenSession: None,
-            C_CloseSession: None,
-            C_CloseAllSessions: None,
-            C_GetSessionInfo: None,
-            C_GetOperationState: None,
-            C_SetOperationState: None,
-            C_Login: None,
-            C_Logout: None,
-            C_CreateObject: None,
-            C_CopyObject: None,
-            C_DestroyObject: None,
-            C_GetObjectSize: None,
-            C_GetAttributeValue: None,
-            C_SetAttributeValue: None,
-            C_FindObjectsInit: None,
-            C_FindObjects: None,
-            C_FindObjectsFinal: None,
-            C_EncryptInit: None,
-            C_Encrypt: None,
-            C_EncryptUpdate: None,
-            C_EncryptFinal: None,
-            C_DecryptInit: None,
-            C_Decrypt: None,
-            C_DecryptUpdate: None,
-            C_DecryptFinal: None,
-            C_DigestInit: None,
-            C_Digest: None,
-            C_DigestUpdate: None,
-            C_DigestKey: None,
-            C_DigestFinal: None,
-            C_SignInit: None,
-            C_Sign: None,
-            C_SignUpdate: None,
-            C_SignFinal: None,
-            C_SignRecoverInit: None,
-            C_SignRecover: None,
-            C_VerifyInit: None,
-            C_Verify: None,
-            C_VerifyUpdate: None,
-            C_VerifyFinal: None,
-            C_VerifyRecoverInit: None,
-            C_VerifyRecover: None,
-            C_DigestEncryptUpdate: None,
-            C_DecryptDigestUpdate: None,
-            C_SignEncryptUpdate: None,
-            C_DecryptVerifyUpdate: None,
-            C_GenerateKey: None,
-            C_GenerateKeyPair: None,
-            C_WrapKey: None,
-            C_UnwrapKey: None,
-            C_DeriveKey: None,
-            C_SeedRandom: None,
-            C_GenerateRandom: None,
-            C_GetFunctionStatus: None,
-            C_CancelFunction: None,
-            C_WaitForSlotEvent: None,
-        };
+        let mut function_list = CK_FUNCTION_LIST::default();
         let mut function_list_pointer: *mut CK_FUNCTION_LIST = &mut function_list;
         assert_eq!(C_GetFunctionList(&mut function_list_pointer), CKR_OK);
 
@@ -929,7 +859,7 @@ mod tests {
             CKR_ARGUMENTS_BAD
         );
 
-        // Expect CKR_BUFFER_TOO_SMALL if pulCount is less than the number of 
+        // Expect CKR_BUFFER_TOO_SMALL if pulCount is less than the number of
         // slots present on the token.
         let mut count = 0;
         let mut slot_list = vec![0; 0];
@@ -941,6 +871,9 @@ mod tests {
 
     #[test]
     fn get_slot_info() {
+        let mut slot_info = CK_SLOT_INFO::default();
+        assert_eq!(C_GetSlotInfo(DEFAULT_SLOT_ID, &mut slot_info), CKR_OK);
+
         // Expect CKR_ARGUMENTS_BAD if pInfo is null.
         assert_eq!(
             C_GetSlotInfo(DEFAULT_SLOT_ID, ptr::null_mut()),

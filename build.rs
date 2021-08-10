@@ -35,6 +35,7 @@ fn main() {
     let bindings = bindgen::Builder::default()
         .header("third_party/pkcs11unix.h")
         .parse_callbacks(Box::new(CargoCallbacks))
+        .derive_default(true)
         .generate()
         .expect("failed to generate bindings");
 
