@@ -16,6 +16,9 @@ lazy_static = "1.4.0"
 [build-dependencies]
 bindgen = "0.59.1"
 
+[dev-dependencies]
+serial_test = "0.5"
+
 [lib]
 name = "bumpkey"
 crate-type = ["cdylib"]

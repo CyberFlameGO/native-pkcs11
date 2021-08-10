@@ -10,7 +10,7 @@ use std::{ops, slice, sync};
 
 fn err_not_implemented(name: &str) -> CK_RV {
     eprintln!("{}() not implemented", name);
-    return CKR_FUNCTION_FAILED;
+    return CKR_FUNCTION_NOT_SUPPORTED;
 }
 
 lazy_static! {
@@ -42,8 +42,8 @@ where
 // fn_name should be the corresponding PKCS #11 function.
 //
 // ```
-// return result_to_rv_with_mod("C_GetSlotList", |mod| {
-//     // Use "mod" to retrieve the slot list.
+// return result_to_rv_with_mod("C_GetSlotList", |module| {
+//     // Use "module" to retrieve the slot list.
 //     // ...
 //
 //     return Ok(());
@@ -148,6 +148,9 @@ pub extern "C" fn C_Initialize(init_args: CK_VOID_PTR) -> CK_RV {
                     "library requires use of OS threads"
                 ));
             }
+            if !args.pReserved.is_null() {
+                return Err(errorf!(CKR_ARGUMENTS_BAD, "pReserved is not null"));
+            }
         }
 
         let m = Module::new()
@@ -156,25 +159,64 @@ pub extern "C" fn C_Initialize(init_args: CK_VOID_PTR) -> CK_RV {
         let mut o = MODULE
             .lock()
             .map_err(|err| errorf!(CKR_GENERAL_ERROR, "failed to acquire lock: {}", err))?;
-        *o = Some(m);
+        match *o {
+            Some(_) => {
+                return Err(errorf!(
+                    CKR_CRYPTOKI_ALREADY_INITIALIZED,
+                    "module has already been initialized",
+                ));
+            }
+            None => {
+                *o = Some(m);
+            }
+        }
         return Ok(());
     });
 }
 
 #[no_mangle]
-pub extern "C" fn C_Finalize(_reserved: CK_VOID_PTR) -> CK_RV {
+pub extern "C" fn C_Finalize(reserved: CK_VOID_PTR) -> CK_RV {
     return result_to_rv("C_Finalize", || {
+        if !reserved.is_null() {
+            return Err(errorf!(CKR_ARGUMENTS_BAD, "pReserved is not null"));
+        }
+
         let mut o = MODULE
             .lock()
             .map_err(|err| errorf!(CKR_GENERAL_ERROR, "failed to acquire lock: {}", err))?;
-        *o = None;
+
+        match *o {
+            Some(_) => {
+                *o = None;
+            }
+            None => {
+                return Err(errorf!(
+                    CKR_CRYPTOKI_NOT_INITIALIZED,
+                    "module has not been initialized",
+                ));
+            }
+        }
         return Ok(());
     });
 }
 
+const MANUFACTURER_ID: &[u8; 32] = b"Google, LLC                     ";
+
 #[no_mangle]
-pub extern "C" fn C_GetInfo(_info_ptr: CK_INFO_PTR) -> CK_RV {
-    return err_not_implemented("C_GetInfo");
+pub extern "C" fn C_GetInfo(info_ptr: CK_INFO_PTR) -> CK_RV {
+    return result_to_rv_with_mod("C_GetInfo", |_| {
+        if info_ptr.is_null() {
+            return Err(errorf!(CKR_ARGUMENTS_BAD, "pInfo is null"));
+        }
+
+        let mut info = CK_INFO::default();
+        info.cryptokiVersion = CK_VERSION { major: 3, minor: 0 };
+        info.manufacturerID = *MANUFACTURER_ID;
+        unsafe {
+            *info_ptr = info;
+        }
+        Ok(())
+    });
 }
 
 #[no_mangle]
@@ -198,7 +240,7 @@ pub extern "C" fn C_GetSlotList(
     slot_list_ptr: CK_SLOT_ID_PTR,
     count_ptr: CK_ULONG_PTR,
 ) -> CK_RV {
-    return result_to_rv("C_GetSlotList", || {
+    return result_to_rv_with_mod("C_GetSlotList", |_| {
         if count_ptr.is_null() {
             return Err(errorf!(CKR_ARGUMENTS_BAD, "pulCount is null"));
         }
@@ -220,11 +262,10 @@ pub extern "C" fn C_GetSlotList(
 
 const SLOT_DESCRIPTION: &[u8; 64] =
     b"                                                                ";
-const MANUFACTURER_ID: &[u8; 32] = b"Google, LLC                     ";
 
 #[no_mangle]
 pub extern "C" fn C_GetSlotInfo(slot_id: CK_SLOT_ID, slot_info_ptr: CK_SLOT_INFO_PTR) -> CK_RV {
-    return result_to_rv("C_GetSlotInfo", || {
+    return result_to_rv_with_mod("C_GetSlotInfo", |_| {
         if slot_id != DEFAULT_SLOT_ID {
             return Err(errorf!(
                 CKR_SLOT_ID_INVALID,
@@ -256,7 +297,7 @@ const SERIAL_NUMBER: &[u8; 16] = b"0000000000000000";
 
 #[no_mangle]
 pub extern "C" fn C_GetTokenInfo(slot_id: CK_SLOT_ID, info_ptr: CK_TOKEN_INFO_PTR) -> CK_RV {
-    return result_to_rv("C_GetTokenInfo", || {
+    return result_to_rv_with_mod("C_GetTokenInfo", |_| {
         if slot_id != DEFAULT_SLOT_ID {
             return Err(errorf!(
                 CKR_SLOT_ID_INVALID,
@@ -299,28 +340,6 @@ extern "C" fn C_GetMechanismInfo(
 }
 
 #[no_mangle]
-
-pub extern "C" fn C_OpenSession(
-    _slot_id: CK_SLOT_ID,
-    _flags: CK_FLAGS,
-    _app_ptr: CK_VOID_PTR,
-    _notify: CK_NOTIFY,
-    _h_ptr: CK_SESSION_HANDLE_PTR,
-) -> CK_RV {
-    return err_not_implemented("C_OpenSession");
-}
-
-#[no_mangle]
-pub extern "C" fn C_CloseSession(_h: CK_SESSION_HANDLE) -> CK_RV {
-    return err_not_implemented("C_CloseSession");
-}
-
-#[no_mangle]
-pub extern "C" fn C_CloseAllSessions(_slot_id: CK_SLOT_ID) -> CK_RV {
-    return err_not_implemented("C_CloseAllSession");
-}
-
-#[no_mangle]
 pub extern "C" fn C_InitToken(
     _slot_id: CK_SLOT_ID,
     _pin_ptr: CK_UTF8CHAR_PTR,
@@ -351,8 +370,68 @@ pub extern "C" fn C_SetPIN(
 }
 
 #[no_mangle]
-pub extern "C" fn C_GetSessionInfo(_h: CK_SESSION_HANDLE, _info_ptr: CK_SESSION_INFO_PTR) -> CK_RV {
-    return err_not_implemented("C_GetSessionInfo");
+pub extern "C" fn C_OpenSession(
+    slot_id: CK_SLOT_ID,
+    flags: CK_FLAGS,
+    _app_ptr: CK_VOID_PTR,
+    _notify: CK_NOTIFY,
+    h_ptr: CK_SESSION_HANDLE_PTR,
+) -> CK_RV {
+    return result_to_rv_with_mod("C_OpenSession", |module| {
+        if slot_id != DEFAULT_SLOT_ID {
+            return Err(errorf!(
+                CKR_SLOT_ID_INVALID,
+                "{} is not a valid slot identifier",
+                slot_id
+            ));
+        }
+        if flags & CKF_SERIAL_SESSION == 0 {
+            return Err(errorf!(
+                CKR_SESSION_PARALLEL_NOT_SUPPORTED,
+                "CKF_SERIAL_SESSION flag is not set"
+            ));
+        }
+        if h_ptr.is_null() {
+            return Err(errorf!(CKR_ARGUMENTS_BAD, "phSession is null"));
+        }
+
+        let h = module.new_session(slot_id)?;
+        unsafe { *h_ptr = h };
+        Ok(())
+    });
+}
+
+#[no_mangle]
+pub extern "C" fn C_CloseSession(h: CK_SESSION_HANDLE) -> CK_RV {
+    return result_to_rv_with_mod("C_CloseSession", |module| module.close_session(h));
+}
+
+#[no_mangle]
+pub extern "C" fn C_CloseAllSessions(slot_id: CK_SLOT_ID) -> CK_RV {
+    return result_to_rv_with_mod("C_CloseAllSessions", |module| {
+        if slot_id != DEFAULT_SLOT_ID {
+            return Err(errorf!(
+                CKR_SLOT_ID_INVALID,
+                "{} is not a valid slot identifier",
+                slot_id
+            ));
+        }
+
+        module.close_all_sessions()
+    });
+}
+
+#[no_mangle]
+pub extern "C" fn C_GetSessionInfo(h: CK_SESSION_HANDLE, info_ptr: CK_SESSION_INFO_PTR) -> CK_RV {
+    return result_to_rv_with_mod("C_GetSessionInfo", |module| {
+        if info_ptr.is_null() {
+            return Err(errorf!(CKR_ARGUMENTS_BAD, "pInfo is null"));
+        }
+
+        let session_info = module.get_session_info(h)?;
+        unsafe { *info_ptr = session_info };
+        Ok(())
+    });
 }
 
 #[no_mangle]
@@ -375,6 +454,10 @@ extern "C" fn C_SetOperationState(
     return err_not_implemented("C_SetOperationState");
 }
 
+// “Protected authentication path” tokens are responsible for handling
+// authentication themselves. In our case, always return CKR_OK to indicate
+// authentication was successful.
+// https://docs.oasis-open.org/pkcs11/pkcs11-base/v3.0/os/pkcs11-base-v3.0-os.html#_Toc29976630
 #[no_mangle]
 pub extern "C" fn C_Login(
     _session_h: CK_SESSION_HANDLE,
@@ -382,12 +465,12 @@ pub extern "C" fn C_Login(
     _pin_ptr: CK_UTF8CHAR_PTR,
     _pin_len: CK_ULONG,
 ) -> CK_RV {
-    return err_not_implemented("C_Login");
+    return CKR_OK;
 }
 
 #[no_mangle]
 pub extern "C" fn C_Logout(_session_h: CK_SESSION_HANDLE) -> CK_RV {
-    return err_not_implemented("C_Logout");
+    return CKR_OK;
 }
 
 #[no_mangle]
@@ -837,12 +920,12 @@ pub extern "C" fn C_GenerateRandom(
 
 #[no_mangle]
 pub extern "C" fn C_GetFunctionStatus(_session_h: CK_SESSION_HANDLE) -> CK_RV {
-    return err_not_implemented("C_GetFunctionStatus");
+    return CKR_FUNCTION_NOT_PARALLEL;
 }
 
 #[no_mangle]
 pub extern "C" fn C_CancelFunction(_session_h: CK_SESSION_HANDLE) -> CK_RV {
-    return err_not_implemented("C_CancelFunction");
+    return CKR_FUNCTION_NOT_PARALLEL;
 }
 
 #[no_mangle]
@@ -857,9 +940,66 @@ pub extern "C" fn C_WaitForSlotEvent(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::ptr;
 
     #[test]
+    #[serial]
+    fn get_initialize() {
+        assert_eq!(C_Initialize(ptr::null_mut()), CKR_OK);
+        assert_eq!(
+            C_Initialize(ptr::null_mut()),
+            CKR_CRYPTOKI_ALREADY_INITIALIZED
+        );
+        assert_eq!(C_Finalize(ptr::null_mut()), CKR_OK);
+
+        let mut args = CK_C_INITIALIZE_ARGS::default();
+        assert_eq!(
+            C_Initialize(&mut args as CK_C_INITIALIZE_ARGS_PTR as *mut std::ffi::c_void),
+            CKR_OK
+        );
+        assert_eq!(C_Finalize(ptr::null_mut()), CKR_OK);
+
+        // Expect CKR_ARGUMENTS_BAD if pReserved is not null.
+        args.pReserved = 1 as *mut u32 as *mut std::ffi::c_void;
+        assert_eq!(
+            C_Initialize(&mut args as CK_C_INITIALIZE_ARGS_PTR as *mut std::ffi::c_void),
+            CKR_ARGUMENTS_BAD
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn finalize() {
+        assert_eq!(C_Initialize(ptr::null_mut()), CKR_OK);
+        assert_eq!(C_Finalize(ptr::null_mut()), CKR_OK);
+        assert_eq!(C_Finalize(ptr::null_mut()), CKR_CRYPTOKI_NOT_INITIALIZED);
+
+        // Expect CKR_ARGUMENTS_BAD if pReserved is not null.
+        assert_eq!(
+            C_Finalize(1 as *mut u32 as *mut std::ffi::c_void),
+            CKR_ARGUMENTS_BAD
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn get_info() {
+        assert_eq!(C_Initialize(ptr::null_mut()), CKR_OK);
+
+        let mut info = CK_INFO::default();
+        assert_eq!(C_GetInfo(&mut info), CKR_OK);
+
+        // Expect CKR_ARGUMENTS_BAD if pInfo is null.
+        assert_eq!(C_GetInfo(ptr::null_mut()), CKR_ARGUMENTS_BAD);
+
+        // Expect CKR_CRYPTOKI_NOT_INITIALIZED if token is not initialized.
+        assert_eq!(C_Finalize(ptr::null_mut()), CKR_OK);
+        assert_eq!(C_GetInfo(&mut info), CKR_CRYPTOKI_NOT_INITIALIZED);
+    }
+
+    #[test]
+    #[serial]
     fn get_function_list() {
         let mut function_list = CK_FUNCTION_LIST::default();
         let mut function_list_pointer: *mut CK_FUNCTION_LIST = &mut function_list;
@@ -870,7 +1010,9 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn get_slot_list() {
+        assert_eq!(C_Initialize(ptr::null_mut()), CKR_OK);
         let mut count = 0;
         assert_eq!(C_GetSlotList(0, std::ptr::null_mut(), &mut count), CKR_OK);
         assert_eq!(count, 1);
@@ -892,10 +1034,19 @@ mod tests {
             C_GetSlotList(0, slot_list.as_mut_ptr(), &mut count),
             CKR_BUFFER_TOO_SMALL
         );
+
+        // Expect CKR_CRYPTOKI_NOT_INITIALIZED if token is not initialized.
+        assert_eq!(C_Finalize(ptr::null_mut()), CKR_OK);
+        assert_eq!(
+            C_GetSlotList(0, std::ptr::null_mut(), &mut count),
+            CKR_CRYPTOKI_NOT_INITIALIZED
+        )
     }
 
     #[test]
+    #[serial]
     fn get_slot_info() {
+        assert_eq!(C_Initialize(ptr::null_mut()), CKR_OK);
         let mut slot_info = CK_SLOT_INFO::default();
         assert_eq!(C_GetSlotInfo(DEFAULT_SLOT_ID, &mut slot_info), CKR_OK);
 
@@ -907,11 +1058,23 @@ mod tests {
 
         // Expect CKR_SLOT_ID_INVALID if slotID references a nonexistent slot.
         assert_eq!(C_GetSlotInfo(1, ptr::null_mut()), CKR_SLOT_ID_INVALID);
+
+        // Expect CKR_CRYPTOKI_NOT_INITIALIZED if token is not initialized.
+        assert_eq!(C_Finalize(ptr::null_mut()), CKR_OK);
+        assert_eq!(
+            C_GetSlotInfo(DEFAULT_SLOT_ID, &mut slot_info),
+            CKR_CRYPTOKI_NOT_INITIALIZED
+        );
     }
 
     #[test]
+    #[serial]
     fn get_token_info() {
-        assert_eq!(C_GetTokenInfo(0, &mut CK_TOKEN_INFO::default()), CKR_OK);
+        assert_eq!(C_Initialize(ptr::null_mut()), CKR_OK);
+        assert_eq!(
+            C_GetTokenInfo(DEFAULT_SLOT_ID, &mut CK_TOKEN_INFO::default()),
+            CKR_OK
+        );
 
         // Expect CKR_SLOT_ID_INVALID if slotID references a nonexistent slot.
         assert_eq!(C_GetTokenInfo(1, ptr::null_mut()), CKR_SLOT_ID_INVALID);
@@ -921,5 +1084,132 @@ mod tests {
             C_GetSlotInfo(DEFAULT_SLOT_ID, ptr::null_mut()),
             CKR_ARGUMENTS_BAD
         );
+
+        // Expect CKR_CRYPTOKI_NOT_INITIALIZED if token is not initialized.
+        assert_eq!(C_Finalize(ptr::null_mut()), CKR_OK);
+        assert_eq!(
+            C_GetTokenInfo(DEFAULT_SLOT_ID, &mut CK_TOKEN_INFO::default()),
+            CKR_CRYPTOKI_NOT_INITIALIZED
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn open_sesson() {
+        assert_eq!(C_Initialize(ptr::null_mut()), CKR_OK);
+        let flags = CKF_SERIAL_SESSION;
+        let mut handle = CK_INVALID_HANDLE;
+        assert_eq!(
+            C_OpenSession(DEFAULT_SLOT_ID, flags, ptr::null_mut(), None, &mut handle),
+            CKR_OK
+        );
+
+        // Expect CKR_SESSION_COUNT if more than one session is opened.
+        // TODO(bweeks): add support for multiple sessions.
+        assert_eq!(
+            C_OpenSession(DEFAULT_SLOT_ID, flags, ptr::null_mut(), None, &mut handle),
+            CKR_SESSION_COUNT
+        );
+
+        // Expect CKR_SLOT_ID_INVALID if slotID references a nonexistent slot.
+        assert_eq!(
+            C_OpenSession(1, flags, ptr::null_mut(), None, &mut handle),
+            CKR_SLOT_ID_INVALID
+        );
+
+        // Expect CKR_SESSION_PARALLEL_NOT_SUPPORTED if CKF_SERIAL_SESSION flag
+        // is not set.
+        assert_eq!(
+            C_OpenSession(DEFAULT_SLOT_ID, 0, ptr::null_mut(), None, &mut handle),
+            CKR_SESSION_PARALLEL_NOT_SUPPORTED
+        );
+
+        // Expect CKR_ARGUMENTS_BAD if phSession is null.
+        assert_eq!(
+            C_OpenSession(
+                DEFAULT_SLOT_ID,
+                flags,
+                ptr::null_mut(),
+                None,
+                ptr::null_mut()
+            ),
+            CKR_ARGUMENTS_BAD
+        );
+
+        assert_eq!(C_CloseSession(handle), CKR_OK);
+        assert_eq!(C_Finalize(ptr::null_mut()), CKR_OK);
+    }
+
+    #[test]
+    #[serial]
+    fn close_sesson() {
+        assert_eq!(C_Initialize(ptr::null_mut()), CKR_OK);
+        let mut handle = CK_INVALID_HANDLE;
+        assert_eq!(
+            C_OpenSession(
+                DEFAULT_SLOT_ID,
+                CKF_SERIAL_SESSION,
+                ptr::null_mut(),
+                None,
+                &mut handle
+            ),
+            CKR_OK
+        );
+        assert_eq!(C_CloseSession(handle), CKR_OK);
+
+        // Expect CKR_SESSION_HANDLE_INVALID if the session has already been closed.
+        assert_eq!(C_CloseSession(handle), CKR_SESSION_HANDLE_INVALID);
+
+        // Expect CKR_SESSION_HANDLE_INVALID if hSession is not a valid handle.
+        assert_eq!(
+            C_CloseSession(CK_INVALID_HANDLE),
+            CKR_SESSION_HANDLE_INVALID
+        );
+
+        assert_eq!(C_Finalize(ptr::null_mut()), CKR_OK);
+    }
+
+    #[test]
+    #[serial]
+    fn get_session_info() {
+        assert_eq!(C_Initialize(ptr::null_mut()), CKR_OK);
+        let mut handle = CK_INVALID_HANDLE;
+        assert_eq!(
+            C_OpenSession(
+                DEFAULT_SLOT_ID,
+                CKF_SERIAL_SESSION,
+                ptr::null_mut(),
+                None,
+                &mut handle
+            ),
+            CKR_OK
+        );
+
+        let mut session_info = CK_SESSION_INFO::default();
+        assert_eq!(C_GetSessionInfo(handle, &mut session_info), CKR_OK);
+
+        // Expect CKR_SESSION_HANDLE_INVALID if hSession is not a valid handle.
+        assert_eq!(
+            C_GetSessionInfo(CK_INVALID_HANDLE, &mut session_info),
+            CKR_SESSION_HANDLE_INVALID
+        );
+
+        // Expect CKR_ARGUMENTS_BAD if pInfo is null.
+        assert_eq!(C_GetSessionInfo(handle, ptr::null_mut()), CKR_ARGUMENTS_BAD);
+
+        assert_eq!(C_CloseSession(handle), CKR_OK);
+        assert_eq!(C_Finalize(ptr::null_mut()), CKR_OK);
+    }
+
+    #[test]
+    #[serial]
+    fn get_function_status() {
+        assert_eq!(C_GetFunctionStatus(0), CKR_FUNCTION_NOT_PARALLEL);
+    }
+
+    #[test]
+    #[serial]
+    fn cancel_function() {
+        assert_eq!(C_GetFunctionStatus(0), CKR_FUNCTION_NOT_PARALLEL);
     }
 }
