@@ -9,7 +9,8 @@ pub struct CargoCallbacks;
 impl callbacks::ParseCallbacks for CargoCallbacks {
     // https://github.com/rust-lang/rust-bindgen/issues/1594
     fn int_macro(&self, name: &str, _value: i64) -> Option<callbacks::IntKind> {
-        if name.starts_with("CKA_")
+        if name.starts_with("CK_")
+            || name.starts_with("CKA_")
             || name.starts_with("CKF_")
             || name.starts_with("CKM_")
             || name.starts_with("CKR_")

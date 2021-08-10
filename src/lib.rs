@@ -250,9 +250,34 @@ pub extern "C" fn C_GetSlotInfo(slot_id: CK_SLOT_ID, slot_info_ptr: CK_SLOT_INFO
     });
 }
 
+const LABEL: &[u8; 32] = b"bumpkey token label             ";
+const MODEL: &[u8; 16] = b"bumpkey         ";
+const SERIAL_NUMBER: &[u8; 16] = b"0000000000000000";
+
 #[no_mangle]
-pub extern "C" fn C_GetTokenInfo(_slot_id: CK_SLOT_ID, _info_ptr: CK_TOKEN_INFO_PTR) -> CK_RV {
-    return err_not_implemented("C_GetTokenInfo");
+pub extern "C" fn C_GetTokenInfo(slot_id: CK_SLOT_ID, info_ptr: CK_TOKEN_INFO_PTR) -> CK_RV {
+    return result_to_rv("C_GetTokenInfo", || {
+        if slot_id != DEFAULT_SLOT_ID {
+            return Err(errorf!(
+                CKR_SLOT_ID_INVALID,
+                "{} is not a valid slot identifier",
+                slot_id
+            ));
+        }
+        if info_ptr.is_null() {
+            return Err(errorf!(CKR_ARGUMENTS_BAD, "pInfo is null"));
+        }
+        let mut token_info = CK_TOKEN_INFO::default();
+        token_info.label = *LABEL;
+        token_info.manufacturerID = *MANUFACTURER_ID;
+        token_info.model = *MODEL;
+        token_info.serialNumber = *SERIAL_NUMBER;
+        token_info.flags = CKF_PROTECTED_AUTHENTICATION_PATH;
+        unsafe {
+            *info_ptr = token_info;
+        }
+        Ok(())
+    });
 }
 
 #[no_mangle]
@@ -882,5 +907,19 @@ mod tests {
 
         // Expect CKR_SLOT_ID_INVALID if slotID references a nonexistent slot.
         assert_eq!(C_GetSlotInfo(1, ptr::null_mut()), CKR_SLOT_ID_INVALID);
+    }
+
+    #[test]
+    fn get_token_info() {
+        assert_eq!(C_GetTokenInfo(0, &mut CK_TOKEN_INFO::default()), CKR_OK);
+
+        // Expect CKR_SLOT_ID_INVALID if slotID references a nonexistent slot.
+        assert_eq!(C_GetTokenInfo(1, ptr::null_mut()), CKR_SLOT_ID_INVALID);
+
+        // Expect CKR_ARGUMENTS_BAD if pInfo is null.
+        assert_eq!(
+            C_GetSlotInfo(DEFAULT_SLOT_ID, ptr::null_mut()),
+            CKR_ARGUMENTS_BAD
+        );
     }
 }
