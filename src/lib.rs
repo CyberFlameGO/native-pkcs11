@@ -177,6 +177,19 @@ pub extern "C" fn C_GetInfo(_info_ptr: CK_INFO_PTR) -> CK_RV {
     return err_not_implemented("C_GetInfo");
 }
 
+#[no_mangle]
+pub extern "C" fn C_GetFunctionList(function_list: CK_FUNCTION_LIST_PTR_PTR) -> CK_RV {
+    return result_to_rv("C_GetFunctionList", || {
+        if function_list.is_null() {
+            return Err(errorf!(CKR_ARGUMENTS_BAD, "ppFunctionList is null"));
+        }
+        unsafe {
+            *function_list = &mut FUNC_LIST;
+        }
+        Ok(())
+    });
+}
+
 const DEFAULT_SLOT_ID: CK_SLOT_ID = 0;
 
 #[no_mangle]
@@ -236,17 +249,10 @@ pub extern "C" fn C_GetSlotInfo(slot_id: CK_SLOT_ID, slot_info_ptr: CK_SLOT_INFO
         Ok(())
     });
 }
+
 #[no_mangle]
 pub extern "C" fn C_GetTokenInfo(_slot_id: CK_SLOT_ID, _info_ptr: CK_TOKEN_INFO_PTR) -> CK_RV {
     return err_not_implemented("C_GetTokenInfo");
-}
-
-#[no_mangle]
-pub extern "C" fn C_GetFunctionList(function_list: CK_FUNCTION_LIST_PTR_PTR) -> CK_RV {
-    unsafe {
-        *function_list = &mut FUNC_LIST;
-    }
-    return CKR_OK;
 }
 
 #[no_mangle]
@@ -829,31 +835,102 @@ mod tests {
     use std::ptr;
 
     #[test]
-    fn get_slot_list() {
-        let mut count = 0;
-        assert_eq!(
-            C_GetSlotList(0, std::ptr::null_mut(), &mut count),
-            CKR_OK
-        );
-        assert_eq!(count, 1);
-        let mut slot_list = vec![99; count as usize];
-        assert_eq!(
-            C_GetSlotList(0, slot_list.as_mut_ptr(), &mut count),
-            CKR_OK
-        );
-        assert_eq!(slot_list[0], 0);
+    fn get_function_list() {
+        let mut function_list = CK_FUNCTION_LIST {
+            version: CK_VERSION { major: 0, minor: 0 },
+            C_Initialize: None,
+            C_Finalize: None,
+            C_GetInfo: None,
+            C_GetFunctionList: None,
+            C_GetSlotList: None,
+            C_GetSlotInfo: None,
+            C_GetTokenInfo: None,
+            C_GetMechanismList: None,
+            C_GetMechanismInfo: None,
+            C_InitToken: None,
+            C_InitPIN: None,
+            C_SetPIN: None,
+            C_OpenSession: None,
+            C_CloseSession: None,
+            C_CloseAllSessions: None,
+            C_GetSessionInfo: None,
+            C_GetOperationState: None,
+            C_SetOperationState: None,
+            C_Login: None,
+            C_Logout: None,
+            C_CreateObject: None,
+            C_CopyObject: None,
+            C_DestroyObject: None,
+            C_GetObjectSize: None,
+            C_GetAttributeValue: None,
+            C_SetAttributeValue: None,
+            C_FindObjectsInit: None,
+            C_FindObjects: None,
+            C_FindObjectsFinal: None,
+            C_EncryptInit: None,
+            C_Encrypt: None,
+            C_EncryptUpdate: None,
+            C_EncryptFinal: None,
+            C_DecryptInit: None,
+            C_Decrypt: None,
+            C_DecryptUpdate: None,
+            C_DecryptFinal: None,
+            C_DigestInit: None,
+            C_Digest: None,
+            C_DigestUpdate: None,
+            C_DigestKey: None,
+            C_DigestFinal: None,
+            C_SignInit: None,
+            C_Sign: None,
+            C_SignUpdate: None,
+            C_SignFinal: None,
+            C_SignRecoverInit: None,
+            C_SignRecover: None,
+            C_VerifyInit: None,
+            C_Verify: None,
+            C_VerifyUpdate: None,
+            C_VerifyFinal: None,
+            C_VerifyRecoverInit: None,
+            C_VerifyRecover: None,
+            C_DigestEncryptUpdate: None,
+            C_DecryptDigestUpdate: None,
+            C_SignEncryptUpdate: None,
+            C_DecryptVerifyUpdate: None,
+            C_GenerateKey: None,
+            C_GenerateKeyPair: None,
+            C_WrapKey: None,
+            C_UnwrapKey: None,
+            C_DeriveKey: None,
+            C_SeedRandom: None,
+            C_GenerateRandom: None,
+            C_GetFunctionStatus: None,
+            C_CancelFunction: None,
+            C_WaitForSlotEvent: None,
+        };
+        let mut function_list_pointer: *mut CK_FUNCTION_LIST = &mut function_list;
+        assert_eq!(C_GetFunctionList(&mut function_list_pointer), CKR_OK);
+
+        // Expect CKR_ARGUMENTS_BAD if ppFunctionList is null.
+        assert_eq!(C_GetFunctionList(ptr::null_mut()), CKR_ARGUMENTS_BAD);
     }
 
     #[test]
-    fn get_slot_list_null_count() {
+    fn get_slot_list() {
+        let mut count = 0;
+        assert_eq!(C_GetSlotList(0, std::ptr::null_mut(), &mut count), CKR_OK);
+        assert_eq!(count, 1);
+        let mut slot_list = vec![99; count as usize];
+        assert_eq!(C_GetSlotList(0, slot_list.as_mut_ptr(), &mut count), CKR_OK);
+        assert_eq!(slot_list[0], 0);
+
+        // Expect CKR_ARGUMENTS_BAD if pulCount is null.
         assert_eq!(
             C_GetSlotList(0, ptr::null_mut(), ptr::null_mut()),
             CKR_ARGUMENTS_BAD
         );
-    }
 
-    #[test]
-    fn get_slot_list_empty() {
+        // Expect CKR_BUFFER_TOO_SMALL if pulCount is less than the number of 
+        // slots present on the token.
         let mut count = 0;
         let mut slot_list = vec![0; 0];
         assert_eq!(
@@ -863,18 +940,14 @@ mod tests {
     }
 
     #[test]
-    fn get_slot_info_invalid_slot() {
-        assert_eq!(
-            C_GetSlotInfo(1, ptr::null_mut()),
-            CKR_SLOT_ID_INVALID
-        );
-    }
-
-    #[test]
-    fn get_slot_info_null_info() {
+    fn get_slot_info() {
+        // Expect CKR_ARGUMENTS_BAD if pInfo is null.
         assert_eq!(
             C_GetSlotInfo(DEFAULT_SLOT_ID, ptr::null_mut()),
             CKR_ARGUMENTS_BAD
         );
+
+        // Expect CKR_SLOT_ID_INVALID if slotID references a nonexistent slot.
+        assert_eq!(C_GetSlotInfo(1, ptr::null_mut()), CKR_SLOT_ID_INVALID);
     }
 }
