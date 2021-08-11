@@ -321,22 +321,83 @@ pub extern "C" fn C_GetTokenInfo(slot_id: CK_SLOT_ID, info_ptr: CK_TOKEN_INFO_PT
     });
 }
 
+const MECHANISMS: &[CK_MECHANISM_TYPE; 3] = &[CKM_ECDSA, CKM_RSA_PKCS, CKM_RSA_PKCS_PSS];
+
 #[no_mangle]
 extern "C" fn C_GetMechanismList(
-    _slot_id: CK_SLOT_ID,
-    _mechanism_list_ptr: CK_MECHANISM_TYPE_PTR,
-    _count_ptr: CK_ULONG_PTR,
+    slot_id: CK_SLOT_ID,
+    mechanism_list_ptr: CK_MECHANISM_TYPE_PTR,
+    count_ptr: CK_ULONG_PTR,
 ) -> CK_RV {
-    return err_not_implemented("C_GetMechanismList");
+    return result_to_rv_with_mod("C_GetMechanismList", |_| {
+        if slot_id != DEFAULT_SLOT_ID {
+            return Err(errorf!(
+                CKR_SLOT_ID_INVALID,
+                "{} is not a valid slot identifier",
+                slot_id
+            ));
+        }
+        if count_ptr.is_null() {
+            return Err(errorf!(CKR_ARGUMENTS_BAD, "pulCount is null"));
+        }
+
+        if mechanism_list_ptr.is_null() {
+            unsafe {
+                *count_ptr = MECHANISMS.len() as CK_ULONG;
+            }
+            return Ok(());
+        }
+        let count = unsafe { *count_ptr } as usize;
+        if count < MECHANISMS.len() {
+            return Err(errorf!(
+                CKR_BUFFER_TOO_SMALL,
+                "pulCount {} < {}",
+                count,
+                MECHANISMS.len()
+            ));
+        }
+        let mechanism_list =
+            unsafe { slice::from_raw_parts_mut(mechanism_list_ptr, MECHANISMS.len()) };
+        mechanism_list.copy_from_slice(MECHANISMS);
+        unsafe {
+            *count_ptr = MECHANISMS.len() as CK_ULONG;
+        }
+        Ok(())
+    });
 }
 
 #[no_mangle]
 extern "C" fn C_GetMechanismInfo(
-    _slot_id: CK_SLOT_ID,
-    _typ: CK_MECHANISM_TYPE,
-    _info_ptr: CK_MECHANISM_INFO_PTR,
+    slot_id: CK_SLOT_ID,
+    typ: CK_MECHANISM_TYPE,
+    info_ptr: CK_MECHANISM_INFO_PTR,
 ) -> CK_RV {
-    return err_not_implemented("C_GetMechanismInfo");
+    return result_to_rv_with_mod("C_GetMechanismInfo", |_| {
+        if slot_id != DEFAULT_SLOT_ID {
+            return Err(errorf!(
+                CKR_SLOT_ID_INVALID,
+                "{} is not a valid slot identifier",
+                slot_id
+            ));
+        }
+        if info_ptr.is_null() {
+            return Err(errorf!(CKR_ARGUMENTS_BAD, "pInfo is null"));
+        }
+        if !MECHANISMS.contains(&typ) {
+            return Err(errorf!(
+                CKR_MECHANISM_INVALID,
+                "mechanism {} not supported",
+                typ
+            ));
+        }
+
+        let mut info = CK_MECHANISM_INFO::default();
+        info.flags = CKF_SIGN;
+        unsafe {
+            *info_ptr = info;
+        }
+        Ok(())
+    });
 }
 
 #[no_mangle]
@@ -1027,7 +1088,7 @@ mod tests {
         );
 
         // Expect CKR_BUFFER_TOO_SMALL if pulCount is less than the number of
-        // slots present on the token.
+        // slots.
         let mut count = 0;
         let mut slot_list = vec![0; 0];
         assert_eq!(
@@ -1089,6 +1150,84 @@ mod tests {
         assert_eq!(C_Finalize(ptr::null_mut()), CKR_OK);
         assert_eq!(
             C_GetTokenInfo(DEFAULT_SLOT_ID, &mut CK_TOKEN_INFO::default()),
+            CKR_CRYPTOKI_NOT_INITIALIZED
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn get_mechanism_list() {
+        assert_eq!(C_Initialize(ptr::null_mut()), CKR_OK);
+        let mut count = 0;
+        assert_eq!(
+            C_GetMechanismList(DEFAULT_SLOT_ID, ptr::null_mut(), &mut count),
+            CKR_OK
+        );
+        assert_ne!(count, 0);
+
+        let mut mechanisms = Vec::<CK_MECHANISM_TYPE>::with_capacity(count as usize);
+        assert_eq!(
+            C_GetMechanismList(DEFAULT_SLOT_ID, mechanisms.as_mut_ptr(), &mut count),
+            CKR_OK
+        );
+        unsafe {
+            mechanisms.set_len(count as usize);
+        }
+        assert_eq!(mechanisms, MECHANISMS);
+
+        // Expect CKR_SLOT_ID_INVALID if slotID references a nonexistent slot.
+        assert_eq!(
+            C_GetMechanismList(1, ptr::null_mut(), ptr::null_mut()),
+            CKR_SLOT_ID_INVALID
+        );
+
+        // Expect CKR_ARGUMENTS_BAD if pulCount is null.
+        assert_eq!(
+            C_GetMechanismList(DEFAULT_SLOT_ID, ptr::null_mut(), ptr::null_mut()),
+            CKR_ARGUMENTS_BAD
+        );
+
+        // Expect CKR_BUFFER_TOO_SMALL if pulCount is less than the number of
+        // mechanisms.
+        assert_eq!(
+            C_GetMechanismList(DEFAULT_SLOT_ID, mechanisms.as_mut_ptr(), &mut (count - 1)),
+            CKR_BUFFER_TOO_SMALL
+        );
+
+        // Expect CKR_CRYPTOKI_NOT_INITIALIZED if token is not initialized.
+        assert_eq!(C_Finalize(ptr::null_mut()), CKR_OK);
+        assert_eq!(
+            C_GetMechanismList(DEFAULT_SLOT_ID, ptr::null_mut(), ptr::null_mut()),
+            CKR_CRYPTOKI_NOT_INITIALIZED
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn get_mechanism_info() {
+        assert_eq!(C_Initialize(ptr::null_mut()), CKR_OK);
+        let mut info = CK_MECHANISM_INFO::default();
+        assert_eq!(
+            C_GetMechanismInfo(DEFAULT_SLOT_ID, MECHANISMS[0], &mut info),
+            CKR_OK
+        );
+
+        // Expect CKR_MECHANISM_INVALID if type is an unsupported mechanism.
+        assert_eq!(
+            C_GetMechanismInfo(DEFAULT_SLOT_ID, CKM_DSA, &mut info),
+            CKR_MECHANISM_INVALID
+        );
+
+        // Expect CKR_ARGUMENTS_BAD if pInfo is null.
+        assert_eq!(
+            C_GetMechanismInfo(DEFAULT_SLOT_ID, MECHANISMS[0], ptr::null_mut()),
+            CKR_ARGUMENTS_BAD
+        );
+
+        // Expect CKR_CRYPTOKI_NOT_INITIALIZED if token is not initialized.
+        assert_eq!(C_Finalize(ptr::null_mut()), CKR_OK);
+        assert_eq!(
+            C_GetMechanismInfo(DEFAULT_SLOT_ID, MECHANISMS[0], ptr::null_mut()),
             CKR_CRYPTOKI_NOT_INITIALIZED
         );
     }

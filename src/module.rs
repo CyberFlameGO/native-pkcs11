@@ -105,14 +105,11 @@ impl Module {
             ));
         }
 
-        let s = self
-            .session
-            .as_ref()
-            .ok_or(errorf!(
-                CKR_SESSION_HANDLE_INVALID,
-                "{} is not a valid session handle",
-                h
-            ))?;
+        let s = self.session.as_ref().ok_or(errorf!(
+            CKR_SESSION_HANDLE_INVALID,
+            "{} is not a valid session handle",
+            h
+        ))?;
 
         return Ok(CK_SESSION_INFO {
             slotID: s.slot_id,
