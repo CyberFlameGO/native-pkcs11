@@ -12,6 +12,7 @@ edition = "2018"
 
 [dependencies]
 lazy_static = "1.4.0"
+openssl = "0.10.29-1"
 
 [build-dependencies]
 bindgen = "0.59.1"
