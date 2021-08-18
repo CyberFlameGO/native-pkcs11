@@ -1,4 +1,5 @@
 use crate::pkcs11::*;
+#[cfg(feature = "openssl")]
 use openssl::pkey;
 use std::fmt;
 use std::fmt::Debug;
@@ -130,6 +131,7 @@ struct Attribute {
     val: Vec<u8>,
 }
 
+#[allow(dead_code)]
 fn get_attribute_val(attrs: &Vec<Attribute>, typ: CK_ATTRIBUTE_TYPE) -> Option<Vec<u8>> {
     for a in attrs.iter() {
         if a.typ == typ {
@@ -139,6 +141,7 @@ fn get_attribute_val(attrs: &Vec<Attribute>, typ: CK_ATTRIBUTE_TYPE) -> Option<V
     return None;
 }
 
+#[cfg(feature = "openssl")]
 fn pub_key_attributes(b: &[u8]) -> Result<Vec<Attribute>> {
     let mut attrs = Vec::new();
     attrs.push(Attribute {
@@ -171,6 +174,7 @@ fn pub_key_attributes(b: &[u8]) -> Result<Vec<Attribute>> {
     return Ok(attrs);
 }
 
+#[cfg(feature = "openssl")]
 fn rsa_pub_key_attributes(
     pub_key: openssl::rsa::Rsa<openssl::pkey::Public>,
 ) -> Result<Vec<Attribute>> {
@@ -222,8 +226,7 @@ fn rsa_pub_key_attributes(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
+    #[cfg(feature = "openssl")]
     #[test]
     fn test_pub_key_attributes() {
         let data = include_bytes!("testdata/rsa_pub.der");
