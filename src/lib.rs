@@ -10,7 +10,7 @@ use std::{ops, slice, sync};
 
 fn err_not_implemented(name: &str) -> CK_RV {
     eprintln!("{}() not implemented", name);
-    return CKR_FUNCTION_NOT_SUPPORTED;
+    CKR_FUNCTION_NOT_SUPPORTED
 }
 
 lazy_static! {
@@ -53,16 +53,15 @@ fn result_to_rv_with_mod<F>(fn_name: &str, f: F) -> CK_RV
 where
     F: ops::FnOnce(&mut Module) -> Result<()>,
 {
-    return result_to_rv(fn_name, || {
+    result_to_rv(fn_name, || {
         let mut o = MODULE
             .lock()
             .map_err(|err| errorf!(CKR_GENERAL_ERROR, "failed to acquire lock: {}", err))?;
-        let mut m = o.as_mut().ok_or(errorf!(
-            CKR_CRYPTOKI_NOT_INITIALIZED,
-            "module not initialized"
-        ))?;
-        return f(&mut m);
-    });
+        let mut m = o
+            .as_mut()
+            .ok_or_else(|| errorf!(CKR_CRYPTOKI_NOT_INITIALIZED, "module not initialized"))?;
+        f(&mut m)
+    })
 }
 
 static mut FUNC_LIST: CK_FUNCTION_LIST = CK_FUNCTION_LIST {
@@ -139,7 +138,7 @@ static mut FUNC_LIST: CK_FUNCTION_LIST = CK_FUNCTION_LIST {
 
 #[no_mangle]
 pub extern "C" fn C_Initialize(init_args: CK_VOID_PTR) -> CK_RV {
-    return result_to_rv("C_Initialize", || {
+    result_to_rv("C_Initialize", || {
         if !init_args.is_null() {
             let args = unsafe { *(init_args as CK_C_INITIALIZE_ARGS_PTR) };
             if args.flags & (CKF_LIBRARY_CANT_CREATE_OS_THREADS) != 0 {
@@ -170,13 +169,13 @@ pub extern "C" fn C_Initialize(init_args: CK_VOID_PTR) -> CK_RV {
                 *o = Some(m);
             }
         }
-        return Ok(());
-    });
+        Ok(())
+    })
 }
 
 #[no_mangle]
 pub extern "C" fn C_Finalize(reserved: CK_VOID_PTR) -> CK_RV {
-    return result_to_rv("C_Finalize", || {
+    result_to_rv("C_Finalize", || {
         if !reserved.is_null() {
             return Err(errorf!(CKR_ARGUMENTS_BAD, "pReserved is not null"));
         }
@@ -196,32 +195,33 @@ pub extern "C" fn C_Finalize(reserved: CK_VOID_PTR) -> CK_RV {
                 ));
             }
         }
-        return Ok(());
-    });
+        Ok(())
+    })
 }
 
 const MANUFACTURER_ID: &[u8; 32] = b"Google, LLC                     ";
 
 #[no_mangle]
 pub extern "C" fn C_GetInfo(info_ptr: CK_INFO_PTR) -> CK_RV {
-    return result_to_rv_with_mod("C_GetInfo", |_| {
+    result_to_rv_with_mod("C_GetInfo", |_| {
         if info_ptr.is_null() {
             return Err(errorf!(CKR_ARGUMENTS_BAD, "pInfo is null"));
         }
 
-        let mut info = CK_INFO::default();
-        info.cryptokiVersion = CK_VERSION { major: 3, minor: 0 };
-        info.manufacturerID = *MANUFACTURER_ID;
         unsafe {
-            *info_ptr = info;
+            *info_ptr = CK_INFO {
+                cryptokiVersion: CK_VERSION { major: 3, minor: 0 },
+                manufacturerID: *MANUFACTURER_ID,
+                ..Default::default()
+            };
         }
         Ok(())
-    });
+    })
 }
 
 #[no_mangle]
 pub extern "C" fn C_GetFunctionList(function_list: CK_FUNCTION_LIST_PTR_PTR) -> CK_RV {
-    return result_to_rv("C_GetFunctionList", || {
+    result_to_rv("C_GetFunctionList", || {
         if function_list.is_null() {
             return Err(errorf!(CKR_ARGUMENTS_BAD, "ppFunctionList is null"));
         }
@@ -229,7 +229,7 @@ pub extern "C" fn C_GetFunctionList(function_list: CK_FUNCTION_LIST_PTR_PTR) -> 
             *function_list = &mut FUNC_LIST;
         }
         Ok(())
-    });
+    })
 }
 
 const DEFAULT_SLOT_ID: CK_SLOT_ID = 0;
@@ -240,7 +240,7 @@ pub extern "C" fn C_GetSlotList(
     slot_list_ptr: CK_SLOT_ID_PTR,
     count_ptr: CK_ULONG_PTR,
 ) -> CK_RV {
-    return result_to_rv_with_mod("C_GetSlotList", |_| {
+    result_to_rv_with_mod("C_GetSlotList", |_| {
         if count_ptr.is_null() {
             return Err(errorf!(CKR_ARGUMENTS_BAD, "pulCount is null"));
         }
@@ -257,7 +257,7 @@ pub extern "C" fn C_GetSlotList(
             *count_ptr = 1;
         }
         Ok(())
-    });
+    })
 }
 
 const SLOT_DESCRIPTION: &[u8; 64] =
@@ -265,7 +265,7 @@ const SLOT_DESCRIPTION: &[u8; 64] =
 
 #[no_mangle]
 pub extern "C" fn C_GetSlotInfo(slot_id: CK_SLOT_ID, slot_info_ptr: CK_SLOT_INFO_PTR) -> CK_RV {
-    return result_to_rv_with_mod("C_GetSlotInfo", |_| {
+    result_to_rv_with_mod("C_GetSlotInfo", |_| {
         if slot_id != DEFAULT_SLOT_ID {
             return Err(errorf!(
                 CKR_SLOT_ID_INVALID,
@@ -288,7 +288,7 @@ pub extern "C" fn C_GetSlotInfo(slot_id: CK_SLOT_ID, slot_info_ptr: CK_SLOT_INFO
             *slot_info_ptr = slot_info;
         }
         Ok(())
-    });
+    })
 }
 
 const LABEL: &[u8; 32] = b"bumpkey token label             ";
@@ -297,7 +297,7 @@ const SERIAL_NUMBER: &[u8; 16] = b"0000000000000000";
 
 #[no_mangle]
 pub extern "C" fn C_GetTokenInfo(slot_id: CK_SLOT_ID, info_ptr: CK_TOKEN_INFO_PTR) -> CK_RV {
-    return result_to_rv_with_mod("C_GetTokenInfo", |_| {
+    result_to_rv_with_mod("C_GetTokenInfo", |_| {
         if slot_id != DEFAULT_SLOT_ID {
             return Err(errorf!(
                 CKR_SLOT_ID_INVALID,
@@ -308,17 +308,19 @@ pub extern "C" fn C_GetTokenInfo(slot_id: CK_SLOT_ID, info_ptr: CK_TOKEN_INFO_PT
         if info_ptr.is_null() {
             return Err(errorf!(CKR_ARGUMENTS_BAD, "pInfo is null"));
         }
-        let mut token_info = CK_TOKEN_INFO::default();
-        token_info.label = *LABEL;
-        token_info.manufacturerID = *MANUFACTURER_ID;
-        token_info.model = *MODEL;
-        token_info.serialNumber = *SERIAL_NUMBER;
-        token_info.flags = CKF_PROTECTED_AUTHENTICATION_PATH;
+
         unsafe {
-            *info_ptr = token_info;
+            *info_ptr = CK_TOKEN_INFO {
+                label: *LABEL,
+                manufacturerID: *MANUFACTURER_ID,
+                model: *MODEL,
+                serialNumber: *SERIAL_NUMBER,
+                flags: CKF_PROTECTED_AUTHENTICATION_PATH,
+                ..Default::default()
+            };
         }
         Ok(())
-    });
+    })
 }
 
 const MECHANISMS: &[CK_MECHANISM_TYPE; 3] = &[CKM_ECDSA, CKM_RSA_PKCS, CKM_RSA_PKCS_PSS];
@@ -329,7 +331,7 @@ extern "C" fn C_GetMechanismList(
     mechanism_list_ptr: CK_MECHANISM_TYPE_PTR,
     count_ptr: CK_ULONG_PTR,
 ) -> CK_RV {
-    return result_to_rv_with_mod("C_GetMechanismList", |_| {
+    result_to_rv_with_mod("C_GetMechanismList", |_| {
         if slot_id != DEFAULT_SLOT_ID {
             return Err(errorf!(
                 CKR_SLOT_ID_INVALID,
@@ -363,7 +365,7 @@ extern "C" fn C_GetMechanismList(
             *count_ptr = MECHANISMS.len() as CK_ULONG;
         }
         Ok(())
-    });
+    })
 }
 
 #[no_mangle]
@@ -372,7 +374,7 @@ extern "C" fn C_GetMechanismInfo(
     typ: CK_MECHANISM_TYPE,
     info_ptr: CK_MECHANISM_INFO_PTR,
 ) -> CK_RV {
-    return result_to_rv_with_mod("C_GetMechanismInfo", |_| {
+    result_to_rv_with_mod("C_GetMechanismInfo", |_| {
         if slot_id != DEFAULT_SLOT_ID {
             return Err(errorf!(
                 CKR_SLOT_ID_INVALID,
@@ -391,13 +393,14 @@ extern "C" fn C_GetMechanismInfo(
             ));
         }
 
-        let mut info = CK_MECHANISM_INFO::default();
-        info.flags = CKF_SIGN;
         unsafe {
-            *info_ptr = info;
+            *info_ptr = CK_MECHANISM_INFO {
+                flags: CKF_SIGN,
+                ..Default::default()
+            };
         }
         Ok(())
-    });
+    })
 }
 
 #[no_mangle]
@@ -407,7 +410,7 @@ pub extern "C" fn C_InitToken(
     _pin_len: CK_ULONG,
     _label_ptr: CK_UTF8CHAR_PTR,
 ) -> CK_RV {
-    return err_not_implemented("C_InitToken");
+    err_not_implemented("C_InitToken")
 }
 
 #[no_mangle]
@@ -416,7 +419,7 @@ pub extern "C" fn C_InitPIN(
     _pin_ptr: CK_UTF8CHAR_PTR,
     _pin_len: CK_ULONG,
 ) -> CK_RV {
-    return err_not_implemented("C_InitPIN");
+    err_not_implemented("C_InitPIN")
 }
 
 #[no_mangle]
@@ -427,7 +430,7 @@ pub extern "C" fn C_SetPIN(
     _new_pin_ptr: CK_UTF8CHAR_PTR,
     _new_pin_len: CK_ULONG,
 ) -> CK_RV {
-    return err_not_implemented("C_SetPIN");
+    err_not_implemented("C_SetPIN")
 }
 
 #[no_mangle]
@@ -438,7 +441,7 @@ pub extern "C" fn C_OpenSession(
     _notify: CK_NOTIFY,
     h_ptr: CK_SESSION_HANDLE_PTR,
 ) -> CK_RV {
-    return result_to_rv_with_mod("C_OpenSession", |module| {
+    result_to_rv_with_mod("C_OpenSession", |module| {
         if slot_id != DEFAULT_SLOT_ID {
             return Err(errorf!(
                 CKR_SLOT_ID_INVALID,
@@ -459,17 +462,17 @@ pub extern "C" fn C_OpenSession(
         let h = module.new_session(slot_id)?;
         unsafe { *h_ptr = h };
         Ok(())
-    });
+    })
 }
 
 #[no_mangle]
 pub extern "C" fn C_CloseSession(h: CK_SESSION_HANDLE) -> CK_RV {
-    return result_to_rv_with_mod("C_CloseSession", |module| module.close_session(h));
+    result_to_rv_with_mod("C_CloseSession", |module| module.close_session(h))
 }
 
 #[no_mangle]
 pub extern "C" fn C_CloseAllSessions(slot_id: CK_SLOT_ID) -> CK_RV {
-    return result_to_rv_with_mod("C_CloseAllSessions", |module| {
+    result_to_rv_with_mod("C_CloseAllSessions", |module| {
         if slot_id != DEFAULT_SLOT_ID {
             return Err(errorf!(
                 CKR_SLOT_ID_INVALID,
@@ -479,12 +482,12 @@ pub extern "C" fn C_CloseAllSessions(slot_id: CK_SLOT_ID) -> CK_RV {
         }
 
         module.close_all_sessions()
-    });
+    })
 }
 
 #[no_mangle]
 pub extern "C" fn C_GetSessionInfo(h: CK_SESSION_HANDLE, info_ptr: CK_SESSION_INFO_PTR) -> CK_RV {
-    return result_to_rv_with_mod("C_GetSessionInfo", |module| {
+    result_to_rv_with_mod("C_GetSessionInfo", |module| {
         if info_ptr.is_null() {
             return Err(errorf!(CKR_ARGUMENTS_BAD, "pInfo is null"));
         }
@@ -492,7 +495,7 @@ pub extern "C" fn C_GetSessionInfo(h: CK_SESSION_HANDLE, info_ptr: CK_SESSION_IN
         let session_info = module.get_session_info(h)?;
         unsafe { *info_ptr = session_info };
         Ok(())
-    });
+    })
 }
 
 #[no_mangle]
@@ -501,7 +504,7 @@ pub extern "C" fn C_GetOperationState(
     _operation_state_ptr: CK_BYTE_PTR,
     _operation_state_len_ptr: CK_ULONG_PTR,
 ) -> CK_RV {
-    return err_not_implemented("C_GetOperationState");
+    err_not_implemented("C_GetOperationState")
 }
 
 #[no_mangle]
@@ -512,7 +515,7 @@ extern "C" fn C_SetOperationState(
     _encryption_key_h: CK_OBJECT_HANDLE,
     _authentication_key_h: CK_OBJECT_HANDLE,
 ) -> CK_RV {
-    return err_not_implemented("C_SetOperationState");
+    err_not_implemented("C_SetOperationState")
 }
 
 // “Protected authentication path” tokens are responsible for handling
@@ -526,12 +529,12 @@ pub extern "C" fn C_Login(
     _pin_ptr: CK_UTF8CHAR_PTR,
     _pin_len: CK_ULONG,
 ) -> CK_RV {
-    return CKR_OK;
+    CKR_OK
 }
 
 #[no_mangle]
 pub extern "C" fn C_Logout(_session_h: CK_SESSION_HANDLE) -> CK_RV {
-    return CKR_OK;
+    CKR_OK
 }
 
 #[no_mangle]
@@ -541,7 +544,7 @@ pub extern "C" fn C_CreateObject(
     _count: CK_ULONG,
     _obj_h_ptr: CK_OBJECT_HANDLE_PTR,
 ) -> CK_RV {
-    return err_not_implemented("C_CreateObject");
+    err_not_implemented("C_CreateObject")
 }
 
 #[no_mangle]
@@ -552,7 +555,7 @@ pub extern "C" fn C_CopyObject(
     _count: CK_ULONG,
     _new_object_h_ptr: CK_OBJECT_HANDLE_PTR,
 ) -> CK_RV {
-    return err_not_implemented("C_CopyObject");
+    err_not_implemented("C_CopyObject")
 }
 
 #[no_mangle]
@@ -560,7 +563,7 @@ pub extern "C" fn C_DestroyObject(
     _session_h: CK_SESSION_HANDLE,
     _object_h: CK_OBJECT_HANDLE,
 ) -> CK_RV {
-    return err_not_implemented("C_DestroyObject");
+    err_not_implemented("C_DestroyObject")
 }
 
 #[no_mangle]
@@ -569,7 +572,7 @@ pub extern "C" fn C_GetObjectSize(
     _object_h: CK_OBJECT_HANDLE,
     _size_ptr: CK_ULONG_PTR,
 ) -> CK_RV {
-    return err_not_implemented("C_GetObjectSize");
+    err_not_implemented("C_GetObjectSize")
 }
 
 #[no_mangle]
@@ -579,7 +582,7 @@ pub extern "C" fn C_GetAttributeValue(
     _template_ptr: CK_ATTRIBUTE_PTR,
     _count: CK_ULONG,
 ) -> CK_RV {
-    return err_not_implemented("C_GetAttributeValue");
+    err_not_implemented("C_GetAttributeValue")
 }
 
 #[no_mangle]
@@ -589,7 +592,7 @@ pub extern "C" fn C_SetAttributeValue(
     _template_ptr: CK_ATTRIBUTE_PTR,
     _count: CK_ULONG,
 ) -> CK_RV {
-    return err_not_implemented("C_SetAttributeValue");
+    err_not_implemented("C_SetAttributeValue")
 }
 
 #[no_mangle]
@@ -598,7 +601,7 @@ pub extern "C" fn C_FindObjectsInit(
     _template_ptr: CK_ATTRIBUTE_PTR,
     _count: CK_ULONG,
 ) -> CK_RV {
-    return err_not_implemented("C_FindObjectsInit");
+    err_not_implemented("C_FindObjectsInit")
 }
 
 #[no_mangle]
@@ -608,12 +611,12 @@ pub extern "C" fn C_FindObjects(
     _max_object_count: CK_ULONG,
     _object_count_ptr: CK_ULONG_PTR,
 ) -> CK_RV {
-    return err_not_implemented("C_FindObjects");
+    err_not_implemented("C_FindObjects")
 }
 
 #[no_mangle]
 pub extern "C" fn C_FindObjectsFinal(_session_h: CK_SESSION_HANDLE) -> CK_RV {
-    return err_not_implemented("C_FindObjectsFinal");
+    err_not_implemented("C_FindObjectsFinal")
 }
 
 #[no_mangle]
@@ -622,7 +625,7 @@ pub extern "C" fn C_EncryptInit(
     _mechanism_ptr: CK_MECHANISM_PTR,
     _key_h: CK_OBJECT_HANDLE,
 ) -> CK_RV {
-    return err_not_implemented("C_EncryptInit");
+    err_not_implemented("C_EncryptInit")
 }
 
 #[no_mangle]
@@ -633,7 +636,7 @@ pub extern "C" fn C_Encrypt(
     _encrypted_data_ptr: CK_BYTE_PTR,
     _encrypted_data_len_ptr: CK_ULONG_PTR,
 ) -> CK_RV {
-    return err_not_implemented("C_Encrypt");
+    err_not_implemented("C_Encrypt")
 }
 
 #[no_mangle]
@@ -644,7 +647,7 @@ pub extern "C" fn C_EncryptUpdate(
     _encrypted_part_ptr: CK_BYTE_PTR,
     _encrypted_part_len_ptr: CK_ULONG_PTR,
 ) -> CK_RV {
-    return err_not_implemented("C_EncryptUpdate");
+    err_not_implemented("C_EncryptUpdate")
 }
 
 #[no_mangle]
@@ -653,7 +656,7 @@ pub extern "C" fn C_EncryptFinal(
     _last_encrypted_part_ptr: CK_BYTE_PTR,
     _last_encrypted_part_len_ptr: CK_ULONG_PTR,
 ) -> CK_RV {
-    return err_not_implemented("C_EncryptFinal");
+    err_not_implemented("C_EncryptFinal")
 }
 
 #[no_mangle]
@@ -662,7 +665,7 @@ pub extern "C" fn C_DecryptInit(
     _mechanism_ptr: CK_MECHANISM_PTR,
     _key_h: CK_OBJECT_HANDLE,
 ) -> CK_RV {
-    return err_not_implemented("C_DecryptInit");
+    err_not_implemented("C_DecryptInit")
 }
 
 #[no_mangle]
@@ -673,7 +676,7 @@ pub extern "C" fn C_Decrypt(
     _data_ptr: CK_BYTE_PTR,
     _data_len_ptr: CK_ULONG_PTR,
 ) -> CK_RV {
-    return err_not_implemented("C_Decrypt");
+    err_not_implemented("C_Decrypt")
 }
 
 #[no_mangle]
@@ -684,7 +687,7 @@ pub extern "C" fn C_DecryptUpdate(
     _part_ptr: CK_BYTE_PTR,
     _part_len_ptr: CK_ULONG_PTR,
 ) -> CK_RV {
-    return err_not_implemented("C_DecryptUpdate");
+    err_not_implemented("C_DecryptUpdate")
 }
 
 #[no_mangle]
@@ -693,7 +696,7 @@ pub extern "C" fn C_DecryptFinal(
     _last_part_ptr: CK_BYTE_PTR,
     _last_part_len_ptr: CK_ULONG_PTR,
 ) -> CK_RV {
-    return err_not_implemented("C_DecryptFinal");
+    err_not_implemented("C_DecryptFinal")
 }
 
 #[no_mangle]
@@ -701,7 +704,7 @@ pub extern "C" fn C_DigestInit(
     _session_h: CK_SESSION_HANDLE,
     _mechanism_ptr: CK_MECHANISM_PTR,
 ) -> CK_RV {
-    return err_not_implemented("C_DecryptFinal");
+    err_not_implemented("C_DecryptFinal")
 }
 
 #[no_mangle]
@@ -712,7 +715,7 @@ pub extern "C" fn C_Digest(
     _digest_ptr: CK_BYTE_PTR,
     _digest_len_ptr: CK_ULONG_PTR,
 ) -> CK_RV {
-    return err_not_implemented("C_Digest");
+    err_not_implemented("C_Digest")
 }
 
 #[no_mangle]
@@ -721,12 +724,12 @@ pub extern "C" fn C_DigestUpdate(
     _part_ptr: CK_BYTE_PTR,
     _part_len: CK_ULONG,
 ) -> CK_RV {
-    return err_not_implemented("C_DigestUpdate");
+    err_not_implemented("C_DigestUpdate")
 }
 
 #[no_mangle]
 pub extern "C" fn C_DigestKey(_session_h: CK_SESSION_HANDLE, _key_h: CK_OBJECT_HANDLE) -> CK_RV {
-    return err_not_implemented("C_DigestKey");
+    err_not_implemented("C_DigestKey")
 }
 
 #[no_mangle]
@@ -735,7 +738,7 @@ pub extern "C" fn C_DigestFinal(
     _digest_ptr: CK_BYTE_PTR,
     _digest_len_ptr: CK_ULONG_PTR,
 ) -> CK_RV {
-    return err_not_implemented("C_DigestFinal");
+    err_not_implemented("C_DigestFinal")
 }
 
 #[no_mangle]
@@ -744,7 +747,7 @@ pub extern "C" fn C_SignInit(
     _mechanism_ptr: CK_MECHANISM_PTR,
     _key_h: CK_OBJECT_HANDLE,
 ) -> CK_RV {
-    return err_not_implemented("C_SignInit");
+    err_not_implemented("C_SignInit")
 }
 
 #[no_mangle]
@@ -755,7 +758,7 @@ pub extern "C" fn C_Sign(
     _signature_ptr: CK_BYTE_PTR,
     _signature_len_ptr: CK_ULONG_PTR,
 ) -> CK_RV {
-    return err_not_implemented("C_Sign");
+    err_not_implemented("C_Sign")
 }
 
 #[no_mangle]
@@ -764,7 +767,7 @@ pub extern "C" fn C_SignUpdate(
     _part_ptr: CK_BYTE_PTR,
     _part_len: CK_ULONG,
 ) -> CK_RV {
-    return err_not_implemented("C_SignUpdate");
+    err_not_implemented("C_SignUpdate")
 }
 
 #[no_mangle]
@@ -773,7 +776,7 @@ pub extern "C" fn C_SignFinal(
     _signature_ptr: CK_BYTE_PTR,
     _signature_len_ptr: CK_ULONG_PTR,
 ) -> CK_RV {
-    return err_not_implemented("C_SignFinal");
+    err_not_implemented("C_SignFinal")
 }
 
 #[no_mangle]
@@ -782,7 +785,7 @@ pub extern "C" fn C_SignRecoverInit(
     _mechanism_ptr: CK_MECHANISM_PTR,
     _key_h: CK_OBJECT_HANDLE,
 ) -> CK_RV {
-    return err_not_implemented("C_SignRecoverInit");
+    err_not_implemented("C_SignRecoverInit")
 }
 
 #[no_mangle]
@@ -793,7 +796,7 @@ pub extern "C" fn C_SignRecover(
     _signature_ptr: CK_BYTE_PTR,
     _signature_len_ptr: CK_ULONG_PTR,
 ) -> CK_RV {
-    return err_not_implemented("C_SignRecover");
+    err_not_implemented("C_SignRecover")
 }
 
 #[no_mangle]
@@ -802,7 +805,7 @@ pub extern "C" fn C_VerifyInit(
     _mechanism_ptr: CK_MECHANISM_PTR,
     _key_h: CK_OBJECT_HANDLE,
 ) -> CK_RV {
-    return err_not_implemented("C_VerifyInit");
+    err_not_implemented("C_VerifyInit")
 }
 
 #[no_mangle]
@@ -813,7 +816,7 @@ pub extern "C" fn C_Verify(
     _signature_ptr: CK_BYTE_PTR,
     _signature_len: CK_ULONG,
 ) -> CK_RV {
-    return err_not_implemented("C_Verify");
+    err_not_implemented("C_Verify")
 }
 
 #[no_mangle]
@@ -822,7 +825,7 @@ pub extern "C" fn C_VerifyUpdate(
     _part_ptr: CK_BYTE_PTR,
     _part_len: CK_ULONG,
 ) -> CK_RV {
-    return err_not_implemented("C_VerifyUpdate");
+    err_not_implemented("C_VerifyUpdate")
 }
 
 #[no_mangle]
@@ -831,7 +834,7 @@ pub extern "C" fn C_VerifyFinal(
     _signature_ptr: CK_BYTE_PTR,
     _signature_len: CK_ULONG,
 ) -> CK_RV {
-    return err_not_implemented("C_VerifyFinal");
+    err_not_implemented("C_VerifyFinal")
 }
 
 #[no_mangle]
@@ -840,7 +843,7 @@ pub extern "C" fn C_VerifyRecoverInit(
     _mechanism_ptr: CK_MECHANISM_PTR,
     _key_h: CK_OBJECT_HANDLE,
 ) -> CK_RV {
-    return err_not_implemented("C_VerifyRecoverInit");
+    err_not_implemented("C_VerifyRecoverInit")
 }
 
 #[no_mangle]
@@ -851,7 +854,7 @@ pub extern "C" fn C_VerifyRecover(
     _data_ptr: CK_BYTE_PTR,
     _data_len_ptr: CK_ULONG_PTR,
 ) -> CK_RV {
-    return err_not_implemented("C_VerifyRecover");
+    err_not_implemented("C_VerifyRecover")
 }
 
 #[no_mangle]
@@ -862,7 +865,7 @@ pub extern "C" fn C_DigestEncryptUpdate(
     _encrypted_part_ptr: CK_BYTE_PTR,
     _encrypted_part_len_ptr: CK_ULONG_PTR,
 ) -> CK_RV {
-    return err_not_implemented("C_DigestEncryptUpdate");
+    err_not_implemented("C_DigestEncryptUpdate")
 }
 
 #[no_mangle]
@@ -873,7 +876,7 @@ pub extern "C" fn C_DecryptDigestUpdate(
     _part_ptr: CK_BYTE_PTR,
     _part_len_ptr: CK_ULONG_PTR,
 ) -> CK_RV {
-    return err_not_implemented("C_DecryptDigestUpdate");
+    err_not_implemented("C_DecryptDigestUpdate")
 }
 
 #[no_mangle]
@@ -884,7 +887,7 @@ pub extern "C" fn C_SignEncryptUpdate(
     _encrypted_part_ptr: CK_BYTE_PTR,
     _encrypted_part_len_ptr: CK_ULONG_PTR,
 ) -> CK_RV {
-    return err_not_implemented("C_SignEncryptUpdate");
+    err_not_implemented("C_SignEncryptUpdate")
 }
 
 #[no_mangle]
@@ -895,7 +898,7 @@ pub extern "C" fn C_DecryptVerifyUpdate(
     _part_ptr: CK_BYTE_PTR,
     _part_len_ptr: CK_ULONG_PTR,
 ) -> CK_RV {
-    return err_not_implemented("C_DecryptVerifyUpdate");
+    err_not_implemented("C_DecryptVerifyUpdate")
 }
 
 #[no_mangle]
@@ -906,7 +909,7 @@ pub extern "C" fn C_GenerateKey(
     _count: CK_ULONG,
     _key_h_ptr: CK_OBJECT_HANDLE_PTR,
 ) -> CK_RV {
-    return err_not_implemented("C_GenerateKey");
+    err_not_implemented("C_GenerateKey")
 }
 
 #[no_mangle]
@@ -920,7 +923,7 @@ pub extern "C" fn C_GenerateKeyPair(
     _public_key_h_ptr: CK_OBJECT_HANDLE_PTR,
     _private_key_h_ptr: CK_OBJECT_HANDLE_PTR,
 ) -> CK_RV {
-    return err_not_implemented("C_GenerateKeyPair");
+    err_not_implemented("C_GenerateKeyPair")
 }
 
 #[no_mangle]
@@ -932,7 +935,7 @@ pub extern "C" fn C_WrapKey(
     _wrapped_key_ptr: CK_BYTE_PTR,
     _wrapped_key_len_ptr: CK_ULONG_PTR,
 ) -> CK_RV {
-    return err_not_implemented("C_WrapKey");
+    err_not_implemented("C_WrapKey")
 }
 
 #[no_mangle]
@@ -946,7 +949,7 @@ pub extern "C" fn C_UnwrapKey(
     _attribute_count: CK_ULONG,
     _key_h_ptr: CK_OBJECT_HANDLE_PTR,
 ) -> CK_RV {
-    return err_not_implemented("C_UnwrapKey");
+    err_not_implemented("C_UnwrapKey")
 }
 
 #[no_mangle]
@@ -958,7 +961,7 @@ pub extern "C" fn C_DeriveKey(
     _attribute_count: CK_ULONG,
     _key_h_ptr: CK_OBJECT_HANDLE_PTR,
 ) -> CK_RV {
-    return err_not_implemented("C_DeriveKey");
+    err_not_implemented("C_DeriveKey")
 }
 
 #[no_mangle]
@@ -967,7 +970,7 @@ pub extern "C" fn C_SeedRandom(
     _seed_ptr: CK_BYTE_PTR,
     _seed_len: CK_ULONG,
 ) -> CK_RV {
-    return err_not_implemented("C_SeedRandom");
+    err_not_implemented("C_SeedRandom")
 }
 
 #[no_mangle]
@@ -976,17 +979,17 @@ pub extern "C" fn C_GenerateRandom(
     _random_data_ptr: CK_BYTE_PTR,
     _random_data_len: CK_ULONG,
 ) -> CK_RV {
-    return err_not_implemented("C_GenerateRandom");
+    err_not_implemented("C_GenerateRandom")
 }
 
 #[no_mangle]
 pub extern "C" fn C_GetFunctionStatus(_session_h: CK_SESSION_HANDLE) -> CK_RV {
-    return CKR_FUNCTION_NOT_PARALLEL;
+    CKR_FUNCTION_NOT_PARALLEL
 }
 
 #[no_mangle]
 pub extern "C" fn C_CancelFunction(_session_h: CK_SESSION_HANDLE) -> CK_RV {
-    return CKR_FUNCTION_NOT_PARALLEL;
+    CKR_FUNCTION_NOT_PARALLEL
 }
 
 #[no_mangle]
@@ -995,7 +998,7 @@ pub extern "C" fn C_WaitForSlotEvent(
     _slot_ptr: CK_SLOT_ID_PTR,
     _reserved_ptr: CK_VOID_PTR,
 ) -> CK_RV {
-    return err_not_implemented("C_WaitForSlotEvent");
+    err_not_implemented("C_WaitForSlotEvent")
 }
 
 #[cfg(test)]

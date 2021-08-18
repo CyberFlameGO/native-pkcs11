@@ -25,15 +25,15 @@ impl Error {
     // return Err(module::Error::new(CKR_GENERAL_ERROR, "we hit a general error"));
     // ```
     pub fn new<T: Into<CK_RV>>(code: T, msg: String) -> Self {
-        return Error {
+        Error {
             code: code.into(),
-            msg: msg,
-        };
+            msg,
+        }
     }
 
     // Returns the PKCS #11 specific return value for this error.
     pub fn rv(&self) -> CK_RV {
-        return self.code;
+        self.code
     }
 }
 
@@ -58,7 +58,7 @@ pub struct Module {
 
 impl Module {
     pub fn new() -> Result<Self> {
-        return Ok(Module { session: None });
+        Ok(Module { session: None })
     }
 
     pub fn new_session(&mut self, slot_id: CK_SLOT_ID) -> Result<CK_SESSION_HANDLE> {
@@ -107,18 +107,20 @@ impl Module {
             ));
         }
 
-        let s = self.session.as_ref().ok_or(errorf!(
-            CKR_SESSION_HANDLE_INVALID,
-            "{} is not a valid session handle",
-            h
-        ))?;
+        let s = self.session.as_ref().ok_or_else(|| {
+            errorf!(
+                CKR_SESSION_HANDLE_INVALID,
+                "{} is not a valid session handle",
+                h
+            )
+        })?;
 
-        return Ok(CK_SESSION_INFO {
+        Ok(CK_SESSION_INFO {
             slotID: s.slot_id,
             state: CKS_RO_USER_FUNCTIONS,
             flags: CKF_SERIAL_SESSION,
             ulDeviceError: 0,
-        });
+        })
     }
 }
 
@@ -132,13 +134,13 @@ struct Attribute {
 }
 
 #[allow(dead_code)]
-fn get_attribute_val(attrs: &Vec<Attribute>, typ: CK_ATTRIBUTE_TYPE) -> Option<Vec<u8>> {
+fn get_attribute_val(attrs: &[Attribute], typ: CK_ATTRIBUTE_TYPE) -> Option<Vec<u8>> {
     for a in attrs.iter() {
         if a.typ == typ {
             return Some(a.val.clone());
         }
     }
-    return None;
+    None
 }
 
 #[cfg(feature = "openssl")]
